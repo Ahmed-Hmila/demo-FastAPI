@@ -1,11 +1,12 @@
 name: Build and Push Docker Images
+
 on:
   push:
     branches:
-      - master 
+      - master
 
 env:
-  AWS_REGION: eu-west-1
+  AWS_REGION: eu-west-3
 
 jobs:
   build-and-push:
@@ -20,9 +21,8 @@ jobs:
     - name: Configure AWS credentials using OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
-      role-to-assume: arn:aws:iam::380426548948:role/Ahmed-OIDC-Role
-      aws-region: ${{ env.AWS_REGION }}
-
+        role-to-assume: arn:aws:iam::380426548948:role/Ahmed-OIDC-Role
+        aws-region: ${{ env.AWS_REGION }}
 
     - name: Build ECS Docker image
       run: docker build -f Dockerfile.ecs -t app-ecs:${{ env.IMAGE_TAG }} .
