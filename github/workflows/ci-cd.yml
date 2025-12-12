@@ -1,0 +1,58 @@
+name: Build and Push Docker Images
+on:
+  push:
+    branches:
+      - master 
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set image tag
+      run: echo "IMAGE_TAG=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+
+    - name: Configure AWS credentials using OIDC
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+      role-to-assume: arn:aws:iam::380426548948:role/Ahmed-OIDC-Role
+      aws-region: ${{ env.AWS_REGION }}
+
+
+    - name: Build ECS Docker image
+      run: docker build -f Dockerfile.ecs -t app-ecs:${{ env.IMAGE_TAG }} .
+
+    - name: Build Lambda Docker image
+      run: docker build -f Dockerfile.lambda -t app-lambda:${{ env.IMAGE_TAG }} .
+
+    - name: Get ECR repo URL from Terraform remote state
+      run: |
+        ECR_REPO_URL=$(aws s3 cp s3://my-terraform-state-bucket/prod/terraform.tfstate - | jq -r '.modules[0].outputs.ecr_repo_url.value')
+        echo "ECR_REPO_URL=$ECR_REPO_URL" >> $GITHUB_ENV
+
+    - name: Login to ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO_URL
+
+    - name: Push ECS Docker image
+      run: |
+        docker tag app-ecs:${{ env.IMAGE_TAG }} $ECR_REPO_URL:ecs-${{ env.IMAGE_TAG }}
+        docker push $ECR_REPO_URL:ecs-${{ env.IMAGE_TAG }}
+
+    - name: Push Lambda Docker image
+      run: |
+        docker tag app-lambda:${{ env.IMAGE_TAG }} $ECR_REPO_URL:lambda-${{ env.IMAGE_TAG }}
+        docker push $ECR_REPO_URL:lambda-${{ env.IMAGE_TAG }}
+
+    - name: Trigger Infra Deployment
+      uses: peter-evans/repository-dispatch@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        repository: Ahmed-Hmila/deploy-infra
+        event-type: update-infra
+        client-payload: '{"image_tag":"${{ env.IMAGE_TAG }}"}'

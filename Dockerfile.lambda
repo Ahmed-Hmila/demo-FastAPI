@@ -1,0 +1,12 @@
+# --- Dockerfile pour AWS LAMBDA ---
+FROM public.ecr.aws/lambda/python:3.10
+
+# Copier les dépendances
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt --target "${LAMBDA_TASK_ROOT}"
+
+# Copier le code
+COPY . ${LAMBDA_TASK_ROOT}
+
+# Handler Lambda = main.lambda_handler
+CMD ["main.lambda_handler"]
