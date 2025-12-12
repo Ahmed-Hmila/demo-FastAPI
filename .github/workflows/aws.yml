@@ -27,20 +27,39 @@ jobs:
         role-to-assume: arn:aws:iam::380426548948:role/Ahmed-OIDC-Role
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Build ECS Docker image
-      run: docker build -f Dockerfile.ecs -t app-ecs:${{ env.IMAGE_TAG }} .
-
-    - name: Build Lambda Docker image
-      run: docker build -f Dockerfile.lambda -t app-lambda:${{ env.IMAGE_TAG }} .
-
-    - name: Get ECR repo URL from Terraform remote state
+    - name: Ensure ECR repository exists
       run: |
-        ECR_REPO_URL=$(aws s3 cp s3://my-terraform-state-bucket/prod/terraform.tfstate - | jq -r '.modules[0].outputs.ecr_repo_url.value')
+        set -e
+        REPO_NAME=ahmed-demo-lab-py
+        REGION=${{ env.AWS_REGION }}
+        
+        echo "Checking if ECR repository $REPO_NAME exists..."
+        
+        if ! aws ecr describe-repositories --region $REGION --repository-names $REPO_NAME >/dev/null 2>&1; then
+          echo "Repository $REPO_NAME does not exist. Creating..."
+          aws ecr create-repository \
+            --repository-name $REPO_NAME \
+            --region $REGION \
+            --image-scanning-configuration scanOnPush=true \
+            --tags Key=Project,Value=FastAPI
+          echo "Repository created."
+        else
+          echo "Repository $REPO_NAME already exists."
+        fi
+
+        # Export ECR URL
+        ECR_REPO_URL=$(aws ecr describe-repositories --region $REGION --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
         echo "ECR_REPO_URL=$ECR_REPO_URL" >> $GITHUB_ENV
 
     - name: Login to ECR
       run: |
         aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO_URL
+
+    - name: Build ECS Docker image
+      run: docker build -f Dockerfile.ecs -t app-ecs:${{ env.IMAGE_TAG }} .
+
+    - name: Build Lambda Docker image
+      run: docker build -f Dockerfile.lambda -t app-lambda:${{ env.IMAGE_TAG }} .
 
     - name: Push ECS Docker image
       run: |
