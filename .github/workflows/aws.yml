@@ -1,80 +1,76 @@
-name: Build and Push Docker Images
+name: Build & Push Lambda Container Image
 
 on:
   push:
     branches:
       - master
+  workflow_dispatch:  # Pour lancer manuellement si besoin
+
+permissions:
+  id-token: write
+  contents: read
 
 env:
   AWS_REGION: eu-west-3
+  ECR_REPOSITORY: ahmed-demo-lab-py
+  PROJECT_NAME: fastapi          
+  TEAM: data-eng
+  ENV: dev
+  COMPANY_ENV_TAG: "data-guiding:env"
 
 jobs:
-  build-and-push:
+  build-push-lambda:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set image tag
-      run: echo "IMAGE_TAG=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+      # Génère un timestamp unique
+      - name: Set timestamp
+        run: echo "TIMESTAMP=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
 
-    - name: Configure AWS credentials using OIDC
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: arn:aws:iam::380426548948:role/Ahmed-OIDC-Role
-        aws-region: ${{ env.AWS_REGION }}
+      # Tag complet avec métadonnées
+      - name: Generate image tag with metadata
+        run: |
+          METADATA_TAG="lambda-${{ env.TIMESTAMP }}-${{ env.PROJECT_NAME }}-${{ env.TEAM }}-${{ env.ENV }}"
+          echo "IMAGE_TAG=$METADATA_TAG" >> $GITHUB_ENV
+          echo "Tag final de l'image : $METADATA_TAG"
 
-    - name: Ensure ECR repository exists
-      run: |
-        set -e
-        REPO_NAME=ahmed-demo-lab-py
-        REGION=${{ env.AWS_REGION }}
-        
-        echo "Checking if ECR repository $REPO_NAME exists..."
-        
-        if ! aws ecr describe-repositories --region $REGION --repository-names $REPO_NAME >/dev/null 2>&1; then
-          echo "Repository $REPO_NAME does not exist. Creating..."
-          aws ecr create-repository \
-            --repository-name $REPO_NAME \
-            --region $REGION \
-            --image-scanning-configuration scanOnPush=true \
-            --tags Key=Project,Value=FastAPI
-          echo "Repository created."
-        else
-          echo "Repository $REPO_NAME already exists."
-        fi
+      # Auth AWS via OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::380426548948:role/Ahmed-OIDC-Role
+          aws-region: ${{ env.AWS_REGION }}
 
-        # Export ECR URL
-        ECR_REPO_URL=$(aws ecr describe-repositories --region $REGION --repository-names $REPO_NAME --query 'repositories[0].repositoryUri' --output text)
-        echo "ECR_REPO_URL=$ECR_REPO_URL" >> $GITHUB_ENV
+      # Récupère l'URL du repository ECR
+      - name: Get ECR Repository URL
+        run: |
+          ECR_URL=$(aws ecr describe-repositories \
+            --repository-names ${{ env.ECR_REPOSITORY }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'repositories[0].repositoryUri' \
+            --output text)
+          echo "ECR_URL=$ECR_URL" >> $GITHUB_ENV
 
-    - name: Login to ECR
-      run: |
-        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO_URL
+      # Login ECR
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+          docker login --username AWS --password-stdin ${{ env.ECR_URL }}
 
-    - name: Build ECS Docker image
-      run: docker build -f Dockerfile.ecs -t app-ecs:${{ env.IMAGE_TAG }} .
+      # Build uniquement l'image Lambda
+      - name: Build Lambda Docker image
+        run: |
+          docker build -f Dockerfile.lambda -t app-lambda:${{ env.IMAGE_TAG }} .
 
-    - name: Build Lambda Docker image
-      run: docker build -f Dockerfile.lambda -t app-lambda:${{ env.IMAGE_TAG }} .
-
-    - name: Push ECS Docker image
-      run: |
-        docker tag app-ecs:${{ env.IMAGE_TAG }} $ECR_REPO_URL:ecs-${{ env.IMAGE_TAG }}
-        docker push $ECR_REPO_URL:ecs-${{ env.IMAGE_TAG }}
-
-    - name: Push Lambda Docker image
-      run: |
-        docker tag app-lambda:${{ env.IMAGE_TAG }} $ECR_REPO_URL:lambda-${{ env.IMAGE_TAG }}
-        docker push $ECR_REPO_URL:lambda-${{ env.IMAGE_TAG }}
-
-    - name: Trigger Infra Deployment
-      uses: peter-evans/repository-dispatch@v2
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        repository: Ahmed-Hmila/deploy-infra
-        event-type: update-infra
-        client-payload: '{"image_tag":"${{ env.IMAGE_TAG }}"}'
+      # Tag & Push l'image Lambda avec métadonnées
+      - name: Tag and Push Lambda image
+        run: |
+          FULL_IMAGE="${{ env.ECR_URL }}:${{ env.IMAGE_TAG }}"
+          docker tag app-lambda:${{ env.IMAGE_TAG }} $FULL_IMAGE
+          docker push $FULL_IMAGE
+          echo "Image Lambda poussée : $FULL_IMAGE"
+ 
+  
