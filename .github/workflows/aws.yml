@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - master
-  workflow_dispatch:   # Pour lancer manuellement
+  workflow_dispatch:  # Pour lancer manuellement si besoin
 
 permissions:
   id-token: write
@@ -12,10 +12,11 @@ permissions:
 
 env:
   AWS_REGION: eu-west-3
-  ECR_REPOSITORY: ahmed-demo-lab-py
-  PROJECT_NAME: fast-api          # ← Change si besoin
+  ECR_REPOSITORY: myproject-repo
+  PROJECT_NAME: fastapi
   TEAM: data-eng
   ENV: dev
+  COMPANY_ENV_TAG: "data-guiding:env"
 
 jobs:
   build-push-lambda:
@@ -29,21 +30,21 @@ jobs:
       - name: Set timestamp
         run: echo "TIMESTAMP=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
 
-      # Crée le tag avec métadonnées intégrées
+      # Tag complet avec métadonnées
       - name: Generate image tag with metadata
         run: |
           METADATA_TAG="lambda-${{ env.TIMESTAMP }}-${{ env.PROJECT_NAME }}-${{ env.TEAM }}-${{ env.ENV }}"
           echo "IMAGE_TAG=$METADATA_TAG" >> $GITHUB_ENV
-          echo "Tag final : $METADATA_TAG"
+          echo "Tag final de l'image : $METADATA_TAG"
 
-      # Auth AWS via OIDC (même rôle que avant)
+      # Auth AWS via OIDC
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::380426548948:role/Ahmed-OIDC-Role
           aws-region: ${{ env.AWS_REGION }}
 
-      # Récupère l'URL du repository ECR existant
+      # Récupère l'URL du repository ECR
       - name: Get ECR Repository URL
         run: |
           ECR_URL=$(aws ecr describe-repositories \
@@ -52,9 +53,8 @@ jobs:
             --query 'repositories[0].repositoryUri' \
             --output text)
           echo "ECR_URL=$ECR_URL" >> $GITHUB_ENV
-          echo "Repository ECR trouvé : $ECR_URL"
 
-      # Connexion ECR (même méthode que ton code original)
+      # Login ECR
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
@@ -65,7 +65,7 @@ jobs:
         run: |
           docker build -f Dockerfile.lambda -t app-lambda:${{ env.IMAGE_TAG }} .
 
-      # Tag & Push l'image Lambda
+      # Tag & Push l'image Lambda avec métadonnées
       - name: Tag and Push Lambda image
         run: |
           FULL_IMAGE="${{ env.ECR_URL }}:${{ env.IMAGE_TAG }}"
@@ -73,8 +73,10 @@ jobs:
           docker push $FULL_IMAGE
           echo "Image Lambda poussée : $FULL_IMAGE"
 
-          # Optionnel : tag latest pour facilité en dev
+      # Optionnel : aussi tagger comme "latest" pour facilité
+      - name: Tag as latest (optional)
+        run: |
           docker tag app-lambda:${{ env.IMAGE_TAG }} ${{ env.ECR_URL }}:latest
           docker push ${{ env.ECR_URL }}:latest
 
- 
+   
